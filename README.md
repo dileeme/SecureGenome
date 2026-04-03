@@ -1,4 +1,4 @@
-# IEEE Paper — Experimental Reproducibility Guide
+# Experimental Reproducibility Guide
 
 ## Experiments Overview
 
