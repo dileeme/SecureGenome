@@ -18,6 +18,7 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import openfhe
+import math
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
@@ -95,7 +96,7 @@ def prs_plaintext(geno_matrix, weights):
 
 def prs_fhe(geno_matrix, weights):
     n_snps, n_samples = geno_matrix.shape
-    batch = min(n_snps, 4096)
+    batch = 2 ** math.floor(math.log2(min(n_snps, 4096)))
 
     col_means = np.nanmean(geno_matrix, axis=1, keepdims=True)
     filled = np.where(np.isnan(geno_matrix), col_means, geno_matrix)
