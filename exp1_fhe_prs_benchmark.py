@@ -12,13 +12,12 @@ Measures:
 Output: exp1_results.csv, exp1_overhead_plot.png
 """
 
-import os, sys, gzip, time, tracemalloc, io
+import os, sys, gzip, time, tracemalloc, io, math
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import openfhe
-import math
 
 # ─── CONFIG ──────────────────────────────────────────────────────────────────
 
@@ -96,7 +95,9 @@ def prs_plaintext(geno_matrix, weights):
 
 def prs_fhe(geno_matrix, weights):
     n_snps, n_samples = geno_matrix.shape
-    batch = 2 ** math.floor(math.log2(min(n_snps, 4096)))
+
+    # batch size MUST be a power of 2 for BFV
+    batch = 2 ** int(math.floor(math.log2(min(n_snps, 4096))))
 
     col_means = np.nanmean(geno_matrix, axis=1, keepdims=True)
     filled = np.where(np.isnan(geno_matrix), col_means, geno_matrix)
@@ -223,7 +224,7 @@ def main():
 
     target_positions = set(pgs_use["pos"].dropna().astype(int).tolist())
 
-    # 2. Extract genotypes — try both "22" and "chr22" as contig names
+    # 2. Extract genotypes — try "22" then "chr22"
     print(f"\n  [extract] Pulling matched SNPs from VCF (may take a few minutes)...")
     geno_matrix, matched_pos = extract_genotypes(VCF_GZ, "22", target_positions, N_SAMPLES)
     if len(matched_pos) == 0:
