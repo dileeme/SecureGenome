@@ -1,263 +1,205 @@
 """
-Experiment 1: Privacy-Preserving Polygenic Risk Score Computation via BFV-FHE
-Dataset:      1000 Genomes Project Phase 3, chr22 VCF (local)
-PRS Weights:  PGS Catalog PGS000018 (Type 2 Diabetes) — local
-Library:      OpenFHE (BFV scheme)
-
-Measures:
-  - Latency (ms) : plaintext vs FHE PRS computation
-  - Memory (MB)  : peak RSS delta under both modes
-  - Overhead multiplier across SNP counts: 100, 250, 500, 1000
-
-Output: exp1_results.csv, exp1_overhead_plot.png
+Experiment 1: BFV-FHE vs Plaintext PRS Benchmark
+Dataset:  1000 Genomes Phase 3 chr22 (local VCF)
+Weights:  PGS000018 T2D score (local)
+Output:   exp1_results.csv, exp1_plot.png
 """
 
-import os, sys, gzip, time, tracemalloc, io, math
+import os, sys, gzip, io, math, time, tracemalloc
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import matplotlib.ticker as ticker
 import openfhe
+from cyvcf2 import VCF
 
-# ─── CONFIG ──────────────────────────────────────────────────────────────────
+# ── HARDCODED PATHS (edit if your filenames differ) ───────────────────────────
+VCF_PATH = "./data/chr22_1kg.vcf.gz"
+PGS_PATH = "./data/PGS000018_weights.txt.gz"
+# ─────────────────────────────────────────────────────────────────────────────
 
-DATA_DIR    = "./data"
-VCF_GZ      = os.path.join(DATA_DIR, "ALL.chr22.phase3_shapeit2_mvncall_integrated_v5b.20130502.genotypes.vcf.gz")
-PGS_FILE    = os.path.join(DATA_DIR, "PGS000018.txt.gz")
-RESULTS_CSV = "exp1_results.csv"
-PLOT_FILE   = "exp1_overhead_plot.png"
-
-SNP_COUNTS = [100, 250, 500, 1000]
+SNP_COUNTS = [100, 250, 500, 998]
 N_SAMPLES  = 50
-SEED       = 42
 
-# ─── SANITY CHECK ────────────────────────────────────────────────────────────
 
-def check_files():
-    missing = [f for f in [VCF_GZ, PGS_FILE] if not os.path.exists(f)]
-    if missing:
-        print("[error] Missing files:")
-        for f in missing:
-            print(f"  {f}")
-        print("\nFiles found in ./data/:")
-        for f in os.listdir(DATA_DIR):
-            print(f"  {f}")
-        sys.exit(1)
-    print(f"  [ok] VCF:      {VCF_GZ}")
-    print(f"  [ok] PGS file: {PGS_FILE}")
-
-# ─── PGS WEIGHTS ─────────────────────────────────────────────────────────────
-
-def fetch_pgs_weights(path):
+def load_pgs(path):
     with gzip.open(path, "rt") as f:
         lines = [l for l in f if not l.startswith("#")]
     df = pd.read_csv(io.StringIO("".join(lines)), sep="\t", low_memory=False)
     df.columns = [c.strip().lower() for c in df.columns]
-    df = df.rename(columns={
-        "chr_name":      "chrom",
-        "chr_position":  "pos",
-        "effect_allele": "ea",
-        "effect_weight": "weight"
-    })
+    df = df.rename(columns={"chr_name": "chrom", "chr_position": "pos",
+                             "effect_allele": "ea", "effect_weight": "weight"})
     df["chrom"]  = df["chrom"].astype(str).str.replace("^chr", "", regex=True)
     df["pos"]    = pd.to_numeric(df["pos"],    errors="coerce")
     df["weight"] = pd.to_numeric(df["weight"], errors="coerce")
-    return df.dropna(subset=["chrom", "pos", "weight"])
+    df = df.dropna(subset=["chrom", "pos", "weight"])
+    chr22 = df[df["chrom"] == "22"].reset_index(drop=True)
+    print(f"  PGS chr22 SNPs: {len(chr22)}")
+    return chr22
 
-# ─── GENOTYPE EXTRACTION ─────────────────────────────────────────────────────
 
-def extract_genotypes(vcf_gz, chrom, positions_set, n_samples=50):
-    from cyvcf2 import VCF
-    matched_geno = []
-    matched_pos  = []
-    vcf = VCF(vcf_gz)
-    sample_idx = list(range(min(n_samples, len(vcf.samples))))
-    print(f"  [info] VCF has {len(vcf.samples)} samples, using first {len(sample_idx)}")
-    for variant in vcf(chrom):
-        if variant.POS in positions_set:
-            gt = variant.gt_types
-            dosage = np.where(gt == 3, np.nan, gt.astype(float))
-            matched_geno.append(dosage[sample_idx])
-            matched_pos.append(variant.POS)
-            if len(matched_pos) >= max(SNP_COUNTS):
-                break
+def load_genotypes(vcf_path, positions_set, n_samples=50):
+    vcf = VCF(vcf_path)
+    n   = min(n_samples, len(vcf.samples))
+    G, P = [], []
+    for v in vcf("22"):
+        if v.POS not in positions_set:
+            continue
+        gt = v.gt_types          # 0=HOM_REF 1=HET 2=HOM_ALT 3=UNKNOWN
+        d  = np.where(gt == 3, np.nan, gt.astype(float))[:n]
+        G.append(d); P.append(v.POS)
+        if len(P) >= max(SNP_COUNTS):
+            break
     vcf.close()
-    return np.array(matched_geno), matched_pos  # (n_snps, n_samples)
+    print(f"  Matched {len(P)} SNPs × {n} samples")
+    return np.array(G), P          # shape (n_snps, n_samples)
 
-# ─── PLAINTEXT PRS ───────────────────────────────────────────────────────────
 
-def prs_plaintext(geno_matrix, weights):
-    col_means = np.nanmean(geno_matrix, axis=1, keepdims=True)
-    filled = np.where(np.isnan(geno_matrix), col_means, geno_matrix)
-    return weights @ filled  # (n_samples,)
+def prs_plain(G, w):
+    mu = np.nanmean(G, axis=1, keepdims=True)
+    G2 = np.where(np.isnan(G), mu, G)
+    return w @ G2                  # (n_samples,)
 
-# ─── BFV-FHE PRS ─────────────────────────────────────────────────────────────
 
-def prs_fhe(geno_matrix, weights):
-    n_snps, n_samples = geno_matrix.shape
+def prs_bfv(G, w):
+    n_snps, n_samp = G.shape
+    mu = np.nanmean(G, axis=1, keepdims=True)
+    G2 = np.where(np.isnan(G), mu, G)
 
-    # batch size MUST be a power of 2 for BFV
+    # batch MUST be power of 2
     batch = 2 ** int(math.floor(math.log2(min(n_snps, 4096))))
 
-    col_means = np.nanmean(geno_matrix, axis=1, keepdims=True)
-    filled = np.where(np.isnan(geno_matrix), col_means, geno_matrix)
-
     SCALE = 100
-    weights_int = [int(round(w * SCALE)) for w in weights[:batch]]
-    weights_int += [0] * (batch - len(weights_int))
+    w_int = [int(round(x * SCALE)) for x in w[:batch]]
+    w_int += [0] * (batch - len(w_int))
 
-    params = openfhe.CCParamsBFVRNS()
-    params.SetPlaintextModulus(786433)
-    params.SetMultiplicativeDepth(1)
-    params.SetBatchSize(batch)
-    params.SetSecurityLevel(openfhe.SecurityLevel.HEStd_128_classic)
+    # build context once per call
+    p = openfhe.CCParamsBFVRNS()
+    p.SetPlaintextModulus(786433)
+    p.SetMultiplicativeDepth(1)
+    p.SetBatchSize(batch)
+    p.SetSecurityLevel(openfhe.SecurityLevel.HEStd_128_classic)
 
-    cc = openfhe.GenCryptoContext(params)
+    cc = openfhe.GenCryptoContext(p)
     cc.Enable(openfhe.PKESchemeFeature.PKE)
     cc.Enable(openfhe.PKESchemeFeature.KEYSWITCH)
     cc.Enable(openfhe.PKESchemeFeature.LEVELEDSHE)
 
-    keypair = cc.KeyGen()
-    cc.EvalSumKeyGen(keypair.secretKey)
-    cc.EvalMultKeyGen(keypair.secretKey)
+    kp = cc.KeyGen()
+    cc.EvalSumKeyGen(kp.secretKey)
+    cc.EvalMultKeyGen(kp.secretKey)
 
-    pt_weights = cc.MakePackedPlaintext(weights_int)
-    prs_values = []
+    pt_w = cc.MakePackedPlaintext(w_int)
+    out  = []
 
-    for s in range(n_samples):
-        geno_int = [int(round(filled[i, s] * SCALE)) for i in range(batch)]
-        pt_geno  = cc.MakePackedPlaintext(geno_int)
-        ct_geno  = cc.Encrypt(keypair.publicKey, pt_geno)
-        ct_prod  = cc.EvalMult(ct_geno, pt_weights)
-        ct_sum   = cc.EvalSum(ct_prod, batch)
-        pt_res   = cc.Decrypt(ct_sum, keypair.secretKey)
-        pt_res.SetLength(1)
-        prs_values.append(pt_res.GetPackedValue()[0] / (SCALE * SCALE))
+    for s in range(n_samp):
+        g_int = [int(round(G2[i, s] * SCALE)) for i in range(batch)]
+        ct    = cc.Encrypt(kp.publicKey, cc.MakePackedPlaintext(g_int))
+        ct    = cc.EvalMult(ct, pt_w)
+        ct    = cc.EvalSum(ct, batch)
+        dec   = cc.Decrypt(ct, kp.secretKey)
+        dec.SetLength(1)
+        out.append(dec.GetPackedValue()[0] / (SCALE * SCALE))
 
-    return prs_values
+    return out
 
-# ─── BENCHMARK ───────────────────────────────────────────────────────────────
 
-def benchmark(geno_matrix, weights, n_snps):
-    G = geno_matrix[:n_snps, :]
-    W = weights[:n_snps]
+def run_benchmark(G, w, n):
+    Gs = G[:n]; ws = w[:n]
 
     tracemalloc.start()
     t0 = time.perf_counter()
-    prs_plain = prs_plaintext(G, W)
+    p_plain = prs_plain(Gs, ws)
     t_plain = (time.perf_counter() - t0) * 1000
-    _, plain_peak = tracemalloc.get_traced_memory()
+    _, mem_plain = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
     tracemalloc.start()
     t0 = time.perf_counter()
-    prs_enc = prs_fhe(G, W)
+    p_fhe = prs_bfv(Gs, ws)
     t_fhe = (time.perf_counter() - t0) * 1000
-    _, fhe_peak = tracemalloc.get_traced_memory()
+    _, mem_fhe = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
-    corr = np.corrcoef(prs_plain, prs_enc)[0, 1]
-
+    corr = float(np.corrcoef(p_plain, p_fhe)[0, 1])
     return {
-        "n_snps":           n_snps,
+        "n_snps":           n,
         "plaintext_ms":     round(t_plain, 2),
         "fhe_ms":           round(t_fhe, 2),
-        "overhead_x":       round(t_fhe / t_plain, 1),
-        "plaintext_mem_mb": round(plain_peak / 1e6, 3),
-        "fhe_mem_mb":       round(fhe_peak / 1e6, 3),
-        "mem_overhead_x":   round(fhe_peak / max(plain_peak, 1), 1),
+        "overhead_x":       round(t_fhe / max(t_plain, 0.001), 1),
+        "plaintext_mem_mb": round(mem_plain / 1e6, 3),
+        "fhe_mem_mb":       round(mem_fhe   / 1e6, 3),
         "prs_correlation":  round(corr, 4),
     }
 
-# ─── PLOT ────────────────────────────────────────────────────────────────────
 
-def plot_results(df):
+def plot(df):
     fig, axes = plt.subplots(1, 3, figsize=(14, 4))
-    fig.suptitle(
-        "FHE vs Plaintext PRS — Compute & Memory Overhead (BFV, 128-bit security)\n"
-        "Dataset: 1000 Genomes Phase 3 chr22 | Weights: PGS000018 (T2D)",
-        fontsize=10, fontweight="bold"
-    )
+    fig.suptitle("BFV-FHE vs Plaintext PRS Overhead\n"
+                 "1000 Genomes chr22 · PGS000018 (T2D) · 128-bit security",
+                 fontweight="bold", fontsize=10)
+
+    fmt = ticker.FuncFormatter(lambda x, _: f"{int(x):,}")
 
     ax = axes[0]
-    ax.plot(df.n_snps, df.plaintext_ms, "o-", label="Plaintext", color="#2ecc71")
-    ax.plot(df.n_snps, df.fhe_ms,       "s-", label="BFV-FHE",   color="#e74c3c")
-    ax.set_xlabel("SNP Count"); ax.set_ylabel("Time (ms)")
-    ax.set_title("Latency"); ax.legend(); ax.set_yscale("log")
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    ax.plot(df.n_snps, df.plaintext_ms, "o-", color="#2ecc71", label="Plaintext")
+    ax.plot(df.n_snps, df.fhe_ms,       "s-", color="#e74c3c", label="BFV-FHE")
+    ax.set_yscale("log"); ax.set_xlabel("SNP count"); ax.set_ylabel("Time (ms)")
+    ax.set_title("Latency"); ax.legend(); ax.xaxis.set_major_formatter(fmt)
 
     ax = axes[1]
-    ax.bar(df.n_snps.astype(str), df.overhead_x, color="#3498db", edgecolor="white")
-    ax.set_xlabel("SNP Count"); ax.set_ylabel("Overhead (×)")
-    ax.set_title("Compute Overhead Multiplier")
+    ax.bar(df.n_snps.astype(str), df.overhead_x, color="#3498db")
     for i, v in enumerate(df.overhead_x):
-        ax.text(i, v + 0.5, f"{v}×", ha="center", fontsize=9)
+        ax.text(i, v + 1, f"{v}×", ha="center", fontsize=9)
+    ax.set_xlabel("SNP count"); ax.set_ylabel("Overhead (×)")
+    ax.set_title("Compute Overhead Multiplier")
 
     ax = axes[2]
-    ax.plot(df.n_snps, df.plaintext_mem_mb, "o-", label="Plaintext", color="#2ecc71")
-    ax.plot(df.n_snps, df.fhe_mem_mb,       "s-", label="BFV-FHE",   color="#e74c3c")
-    ax.set_xlabel("SNP Count"); ax.set_ylabel("Peak Memory (MB)")
-    ax.set_title("Memory Footprint"); ax.legend()
-    ax.xaxis.set_major_formatter(ticker.FuncFormatter(lambda x, _: f"{int(x):,}"))
+    ax.plot(df.n_snps, df.plaintext_mem_mb, "o-", color="#2ecc71", label="Plaintext")
+    ax.plot(df.n_snps, df.fhe_mem_mb,       "s-", color="#e74c3c", label="BFV-FHE")
+    ax.set_xlabel("SNP count"); ax.set_ylabel("Peak memory (MB)")
+    ax.set_title("Memory Footprint"); ax.legend(); ax.xaxis.set_major_formatter(fmt)
 
     plt.tight_layout()
-    plt.savefig(PLOT_FILE, dpi=150, bbox_inches="tight")
-    print(f"  [saved] {PLOT_FILE}")
+    plt.savefig("exp1_plot.png", dpi=150, bbox_inches="tight")
+    print("  Saved: exp1_plot.png")
 
-# ─── MAIN ────────────────────────────────────────────────────────────────────
 
 def main():
     print("\n=== Experiment 1: FHE PRS Benchmark ===\n")
-    check_files()
 
-    # 1. Load PGS weights
-    print("\n  [load] Parsing PGS000018 weights...")
-    pgs = fetch_pgs_weights(PGS_FILE)
-    chr22_pgs = pgs[pgs["chrom"] == "22"].reset_index(drop=True)
-    print(f"  [info] PGS000018 variants on chr22: {len(chr22_pgs)}")
+    for p in [VCF_PATH, PGS_PATH]:
+        if not os.path.exists(p):
+            sys.exit(f"[error] File not found: {p}")
 
-    if len(chr22_pgs) >= 50:
-        pgs_use = chr22_pgs.head(max(SNP_COUNTS)).copy()
-    else:
-        print("  [warn] Few chr22 PGS SNPs — using genome-wide top SNPs")
-        pgs_use = pgs.head(max(SNP_COUNTS)).copy()
+    pgs  = load_pgs(PGS_PATH)
+    pos_set = set(pgs["pos"].dropna().astype(int))
 
-    target_positions = set(pgs_use["pos"].dropna().astype(int).tolist())
+    print("\n  Loading genotypes from VCF...")
+    G, matched = load_genotypes(VCF_PATH, pos_set, N_SAMPLES)
 
-    # 2. Extract genotypes — try "22" then "chr22"
-    print(f"\n  [extract] Pulling matched SNPs from VCF (may take a few minutes)...")
-    geno_matrix, matched_pos = extract_genotypes(VCF_GZ, "22", target_positions, N_SAMPLES)
-    if len(matched_pos) == 0:
-        print("  [retry] Trying contig name 'chr22'...")
-        geno_matrix, matched_pos = extract_genotypes(VCF_GZ, "chr22", target_positions, N_SAMPLES)
+    if len(matched) < 100:
+        sys.exit(f"[error] Only {len(matched)} SNPs matched — need ≥100")
 
-    print(f"  [info] Matched {len(matched_pos)} SNPs × {geno_matrix.shape[1]} samples")
+    p2w = dict(zip(pgs["pos"].astype(int), pgs["weight"]))
+    w   = np.array([p2w.get(p, 0.0) for p in matched])
 
-    if len(matched_pos) < 100:
-        sys.exit(f"[error] Only {len(matched_pos)} SNPs matched — need at least 100.")
-
-    # 3. Align weights
-    pos_to_weight = dict(zip(pgs_use["pos"].astype(int), pgs_use["weight"]))
-    weights = np.array([pos_to_weight.get(p, 0.0) for p in matched_pos])
-
-    # 4. Benchmark
-    print("\n  [benchmark] Running plaintext vs BFV-FHE...\n")
-    records = []
+    print("\n  Benchmarking...\n")
+    rows = []
     for n in SNP_COUNTS:
-        n = min(n, len(matched_pos))
-        print(f"    SNP={n:4d} ...", end=" ", flush=True)
-        r = benchmark(geno_matrix, weights, n)
-        records.append(r)
-        print(f"Plaintext {r['plaintext_ms']}ms | FHE {r['fhe_ms']}ms | "
-              f"Overhead {r['overhead_x']}× | PRS corr {r['prs_correlation']}")
+        n = min(n, len(matched))
+        print(f"  SNP={n} ...", end=" ", flush=True)
+        r = run_benchmark(G, w, n)
+        rows.append(r)
+        print(f"plain={r['plaintext_ms']}ms  fhe={r['fhe_ms']}ms  "
+              f"overhead={r['overhead_x']}×  corr={r['prs_correlation']}")
 
-    df = pd.DataFrame(records)
-    df.to_csv(RESULTS_CSV, index=False)
-    print(f"\n  [saved] {RESULTS_CSV}")
+    df = pd.DataFrame(rows)
+    df.to_csv("exp1_results.csv", index=False)
     print("\n" + df.to_string(index=False))
+    plot(df)
+    print("\n[done]")
 
-    plot_results(df)
-    print("\n[done] Experiment 1 complete.")
 
 if __name__ == "__main__":
     main()
