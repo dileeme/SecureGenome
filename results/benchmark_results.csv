@@ -1,0 +1,6 @@
+Metric,Value
+Plaintext Processing (ms),5.17
+Total Encryption Time (s),12.45
+Total FHE Computation (s),111.42
+Accuracy (MAE),1.52e-06
+Performance Overhead (x),21569.0

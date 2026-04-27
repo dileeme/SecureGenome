@@ -1,0 +1,5 @@
+Metric,Value
+Encryption Time (Total) (s),5.42
+Computation Time (Total) (s),48.58
+Ciphertext Size (KB),86.3
+Target Latency Met,YES
