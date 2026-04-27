@@ -12,17 +12,24 @@
 The repository is organized into three primary experimental modules, supported by processed genomic feature matrices and result tracking.
 
 ```text
-├── data/
-│   └── genotype_matrix.tsv       # Processed genomic features (N=2504)
+├── experiments/
+│   ├── benchmark.py              # [Exp 2] Baseline FHE PRS Benchmarking
+│   ├── reidentification.py       # [Exp 1] MIA Phase Transition Analysis
+│   └── tunedbenchmark.py         # [Exp 3] L=1 Parameter Compaction Optimization
+│
+├── figures/
+│   ├── fhe_performance_overhead.png
+│   ├── latency_optimization.png
+│   ├── reid_auc_final_plot.png
+│   ├── storage_optimization.png
+│   └── hey.md
+│
 ├── results/
-│   ├── reidentification_results.csv   # Empirical AUC data (Exp 1)
 │   ├── benchmark_results.csv          # Standard FHE metrics (Exp 2)
+│   ├── reidentification_results.csv   # Empirical AUC data (Exp 1)
 │   └── tuned_benchmark_results.csv    # Optimized FHE metrics (Exp 3)
-├── reidentification.py           # [Exp 1] MIA Phase Transition Analysis
-├── benchmark.py                  # [Exp 2] Baseline FHE PRS Benchmarking
-├── tunedbenchmark.py             # [Exp 3] L=1 Parameter Compaction Optimization
-├── requirements.txt              # Project dependencies
-└── README.md                     # Documentation
+│
+└── README.md
 ```
 ## Overview
 
