@@ -11,6 +11,7 @@
 
 The repository is organized into three primary experimental modules, supported by processed genomic feature matrices and result tracking.
 
+```text
 ├── data/
 │   └── genotype_matrix.tsv       # Processed genomic features (N=2504)
 ├── results/
@@ -22,7 +23,7 @@ The repository is organized into three primary experimental modules, supported b
 ├── tunedbenchmark.py             # [Exp 3] L=1 Parameter Compaction Optimization
 ├── requirements.txt              # Project dependencies
 └── README.md                     # Documentation
-
+```
 ## Overview
 
 This repository contains the full experimental pipeline for the paper, characterizing the "privacy cliff" in genomic beacons and providing a domain-optimized FHE mitigation via parameter compaction.
