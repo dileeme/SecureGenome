@@ -22,7 +22,6 @@ The repository is organized into three primary experimental modules, supported b
 │   ├── latency_optimization.png
 │   ├── reid_auc_final_plot.png
 │   ├── storage_optimization.png
-│   └── hey.md
 │
 ├── results/
 │   ├── benchmark_results.csv          # Standard FHE metrics (Exp 2)
