@@ -2,7 +2,7 @@
 ### Quantifying Re-Identification Risk from Summary Statistics and the Performance Cost of Homomorphic Encryption
 
 > **ACM CCS 2026 Submission #5286**
-> **Dataset:** 1000 Genomes Project Phase 3, Chromosome 22 ($N = 2,504$)  
+> **Dataset:** 1000 Genomes Project Phase 3, Chromosome 22 (N = 2,504)  
 > **FHE Library:** TenSEAL (CKKS scheme)
 
 ---
