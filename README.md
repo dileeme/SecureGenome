@@ -15,8 +15,8 @@ The repository is organized into three primary experimental modules, supported b
 ├── experiments/
 │   ├── benchmark.py              # [Exp 2] Baseline FHE PRS Benchmarking
 │   ├── reidentification.py       # [Exp 1] MIA Phase Transition Analysis
-│   └── tunedbenchmark.py         # [Exp 3] L=1 Parameter Compaction Optimization
-│
+│   ├── tunedbenchmark.py      # [Exp 3] L=1 Parameter Compaction Optimization
+│   └── cue.py 
 ├── figures/
 │   ├── fhe_performance_overhead.png
 │   ├── latency_optimization.png
@@ -26,8 +26,8 @@ The repository is organized into three primary experimental modules, supported b
 ├── results/
 │   ├── benchmark_results.csv          # Standard FHE metrics (Exp 2)
 │   ├── reidentification_results.csv   # Empirical AUC data (Exp 1)
-│   └── tuned_benchmark_results.csv    # Optimized FHE metrics (Exp 3)
-│
+│   ├── tuned_benchmark_results.csv    # Optimized FHE metrics (Exp 3)
+│   └── cue_results_expanded.py 
 └── README.md
 ```
 ## Overview
