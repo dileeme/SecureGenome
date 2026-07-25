@@ -1,15 +1,3 @@
-"""
-Regression test: assert that label-construction and feature-construction
-never reference overlapping or LD-adjacent SNP index ranges.
-
-LD-adjacency is defined conservatively as within ±20 SNPs of the boundary
-between the label-construction window and the feature window. This test
-will fail loudly if anyone reintroduces the circular cohort construction
-bug fixed in Fix 1.
-
-Run with: python -m pytest tests/test_no_circularity.py -v
-"""
-
 import sys
 import os
 import numpy as np
