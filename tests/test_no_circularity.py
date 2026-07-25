@@ -68,16 +68,10 @@ class TestNoCircularity:
             assert "ablation" in str(w[0].message).lower()
 
     def test_external_label_has_no_snp_range_dependence(self):
-        """
-        The external label function signature does not accept a genotype matrix
-        or any SNP index — it takes only a panel_path, superpopulation, and seed.
-        This structurally prevents any positional SNP dependence.
-        """
         import inspect
         from src.exp1_membership_inference.cohort_construction import construct_label_external
         sig = inspect.signature(construct_label_external)
         params = list(sig.parameters.keys())
-        # Must not have any parameter that could accept a numpy array / genotype matrix
         forbidden = {"X_all", "X", "genotype", "matrix", "snp_data", "data"}
         assert not forbidden.intersection(params), (
             f"construct_label_external has suspicious parameters: {params}. "
