@@ -1,31 +1,3 @@
-"""
-Experiment 1 (IBD variant): Relative-Assisted Membership Inference Attack.
-
-Attack model (per Gymrek et al. 2013; Erlich & Narayanan 2014):
-  - Beacon = mothers from 1000G trios enrolled in a hypothetical study cohort.
-  - Adversary holds a first-degree relative's genome, simulating a scenario
-    where a biological child's DNA was obtained via a direct-to-consumer (DTC)
-    database leak (e.g. 23andMe).
-  - The adversary queries the beacon using the child's alleles. Because the
-    child shares ~50% of alleles IBD with the mother, beacon responses are
-    systematically enriched for TRUE at positions where the child carries the
-    minor allele -- leaking membership information.
-
-Why simulation:
-  1000G Phase 3 trios have both parents genotyped but children largely absent
-  from the Phase 3 release (only 9 of 685 listed children appear in the
-  genotype matrix). We therefore simulate each child's genome via Mendelian
-  inheritance from the phased parental haplotypes. This is a principled,
-  conservative simulation: by construction the simulated child shares exactly
-  50% IBD with each parent, matching the theoretical expectation for a
-  first-degree relative.
-
-Three attacks are compared across the k-SNP sweep:
-  - Logistic Regression (LR) on the child's genotype features
-  - Shringarpure-Bustamante LRT (population-genetics score)
-  - Raisaro score function
-"""
-
 import os
 import sys
 import argparse
@@ -48,34 +20,21 @@ RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results", "ex
 FIGURES_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "figures")
 
 
-# ---------------------------------------------------------------------------
-# Data loading
-# ---------------------------------------------------------------------------
-
 def load_phased_genotypes(tsv_path: str, n_snps: int = 500):
-    """
-    Load genotype matrix, keeping phased strings (e.g. '0|1').
-    Returns:
-      dosage : np.ndarray (n_samples, n_snps) -- integer dosage 0/1/2
-      haplotypes : np.ndarray (n_samples, n_snps, 2) -- per-allele {0,1}
-      sample_ids : list[str]
-    """
     print(f"Loading phased genotype matrix ({n_snps} SNPs)...")
     df = pd.read_csv(tsv_path, sep="\t", nrows=n_snps + 1, header=None)
     df = df.dropna(axis=1, how="all").dropna(axis=0, how="all")
 
-    # First row is sample IDs
     sample_ids = df.iloc[0].tolist()
     df = df.iloc[1:].reset_index(drop=True)
 
-    # Parse alleles from phased strings
     n_actual_snps = len(df)
     n_samples = len(sample_ids)
     dosage = np.zeros((n_samples, n_actual_snps), dtype=np.int8)
     haplotypes = np.zeros((n_samples, n_actual_snps, 2), dtype=np.int8)
 
-    # Vectorised parse
-    raw = df.values.T  # (n_samples, n_snps) of strings like '0|1'
+
+    raw = df.values.T
 
     for j in range(n_actual_snps):
         col = raw[:, j]
@@ -91,18 +50,8 @@ def load_phased_genotypes(tsv_path: str, n_snps: int = 500):
     return dosage, haplotypes, sample_ids
 
 
-# ---------------------------------------------------------------------------
-# Pedigree / cohort construction
-# ---------------------------------------------------------------------------
-
 def build_ibd_cohort(ped_path: str, sample_ids: list, seed: int = 42):
-    """
-    Identify complete trios where both parents are genotyped.
-    Returns:
-      mother_indices   : indices into sample_ids for beacon members (mothers)
-      father_indices   : indices into sample_ids for corresponding fathers
-      control_indices  : indices into sample_ids for unrelated controls (not in any trio)
-    """
+  
     ped = pd.read_csv(ped_path, sep="\t")
     for col in ped.columns:
         ped[col] = ped[col].astype(str).str.strip()
@@ -110,7 +59,7 @@ def build_ibd_cohort(ped_path: str, sample_ids: list, seed: int = 42):
     sample_set = set(sample_ids)
     id_to_idx = {sid: i for i, sid in enumerate(sample_ids)}
 
-    # Find rows labeled as children with both parents genotyped
+
     trios = ped[
         (ped["Paternal ID"] != "0") &
         (ped["Maternal ID"] != "0") &
@@ -118,7 +67,6 @@ def build_ibd_cohort(ped_path: str, sample_ids: list, seed: int = 42):
         ped["Maternal ID"].isin(sample_set)
     ].copy()
 
-    # Also find all families where father + mother are both genotyped (via Relationship field)
     fathers = ped[ped["Relationship"].str.contains("father", case=False, na=False) &
                   ped["Individual ID"].isin(sample_set)]
     mothers = ped[ped["Relationship"].str.contains("mother", case=False, na=False) &
@@ -142,7 +90,7 @@ def build_ibd_cohort(ped_path: str, sample_ids: list, seed: int = 42):
 
     rng = np.random.default_rng(seed)
     rng.shuffle(control_ids)
-    # Balance controls to match number of mother (beacon member) pairs
+    
     control_ids = control_ids[:len(mother_ids)]
 
     mother_indices = [id_to_idx[m] for m in mother_ids]
@@ -154,41 +102,21 @@ def build_ibd_cohort(ped_path: str, sample_ids: list, seed: int = 42):
     return mother_indices, father_indices, control_indices
 
 
-# ---------------------------------------------------------------------------
-# Mendelian child simulation
-# ---------------------------------------------------------------------------
+
 
 def simulate_child_genotype(
     father_haplotypes: np.ndarray,
     mother_haplotypes: np.ndarray,
     rng: np.random.Generator,
 ) -> np.ndarray:
-    """
-    Simulate a child's dosage genotype via Mendelian inheritance.
-
-    For each SNP, randomly select one haplotype from the father (paternal
-    transmission) and one from the mother (maternal transmission).
-
-    Parameters
-    ----------
-    father_haplotypes : (n_snps, 2)
-    mother_haplotypes : (n_snps, 2)
-
-    Returns
-    -------
-    child_dosage : (n_snps,) int, values in {0, 1, 2}
-    """
     n_snps = father_haplotypes.shape[0]
-    pat_choice = rng.integers(0, 2, size=n_snps)  # which paternal haplotype
-    mat_choice = rng.integers(0, 2, size=n_snps)  # which maternal haplotype
+    pat_choice = rng.integers(0, 2, size=n_snps)  
+    mat_choice = rng.integers(0, 2, size=n_snps) 
     pat_allele = father_haplotypes[np.arange(n_snps), pat_choice]
     mat_allele = mother_haplotypes[np.arange(n_snps), mat_choice]
     return (pat_allele + mat_allele).astype(np.int8)
 
 
-# ---------------------------------------------------------------------------
-# Main attack
-# ---------------------------------------------------------------------------
 
 def run_ibd_attack(genotype_tsv: str, ped_path: str, seed: int = 42, n_snps: int = 500):
     dosage, haplotypes, sample_ids = load_phased_genotypes(genotype_tsv, n_snps=n_snps)
@@ -201,14 +129,12 @@ def run_ibd_attack(genotype_tsv: str, ped_path: str, seed: int = 42, n_snps: int
     simulated_children = np.array([
         simulate_child_genotype(haplotypes[father_idx[i]], haplotypes[mother_idx[i]], rng)
         for i in tqdm(range(len(mother_idx)), desc="Simulating children")
-    ])  # shape: (n_trios, n_snps)
+    ]) 
 
-    # Controls: their own genotype as the adversary reference (no IBD signal)
-    control_genotypes = dosage[control_idx]  # shape: (n_controls, n_snps)
 
-    # Feature matrix: rows = adversary reference genotype
-    # Label: 1 = mother is in beacon (adversary has child IBD-linked to mother)
-    #        0 = control (adversary has unrelated individual's genome)
+    control_genotypes = dosage[control_idx]  
+
+
     X_all = np.vstack([simulated_children, control_genotypes])
     y = np.array([1] * len(mother_idx) + [0] * len(control_idx))
 
@@ -225,7 +151,7 @@ def run_ibd_attack(genotype_tsv: str, ped_path: str, seed: int = 42, n_snps: int
 
     for k in tqdm(SNP_SWEEP, desc="SNP sweep"):
         X = X_all[:, :k]
-        maf = dosage[:, :k].mean(axis=0) / 2.0  # population MAF from full cohort
+        maf = dosage[:, :k].mean(axis=0) / 2.0 
 
         clf = LogisticRegression(max_iter=1000, C=10)
         lr_auc = float(np.mean(
