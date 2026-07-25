@@ -10,39 +10,28 @@ from src.exp1_membership_inference.cohort_construction import (
     construct_label_circular_DEPRECATED,
 )
 
-
-# LD-adjacency buffer: SNPs within this many positions of the label window
-# boundary are considered potentially LD-linked.
 LD_BUFFER = 20
-
-LABEL_START, LABEL_END = CIRCULAR_LABEL_SNP_RANGE  # (40, 60) — for reference only
+LABEL_START, LABEL_END = CIRCULAR_LABEL_SNP_RANGE 
 
 
 def feature_window_from_attack(k: int, feature_start: int = 0) -> range:
-    """Returns the SNP index range used as features in attack.py."""
     return range(feature_start, feature_start + k)
 
 
 def assert_no_overlap_or_adjacency(label_range: tuple, feature_range: range, ld_buffer: int = LD_BUFFER):
-    """
-    Asserts that feature_range does not overlap or come within ld_buffer
-    positions of the label range boundaries.
-    """
     l_start, l_end = label_range
     f_start = feature_range.start
-    f_end = feature_range.stop  # exclusive
+    f_end = feature_range.stop 
 
-    # Direct overlap
+
     overlap = not (f_end <= l_start or f_start >= l_end)
     assert not overlap, (
         f"CIRCULARITY: feature range [{f_start},{f_end}) overlaps label range "
         f"[{l_start},{l_end}). This reproduces the Fix-1 bug."
     )
 
-    # LD-adjacency: the gap between feature window and label window is < ld_buffer.
-    # "Within ld_buffer positions" means the gap must be strictly less than ld_buffer.
-    too_close_left = f_end > l_start - ld_buffer and f_end <= l_start  # gap < ld_buffer
-    too_close_right = f_start >= l_end and f_start < l_end + ld_buffer  # gap < ld_buffer
+    too_close_left = f_end > l_start - ld_buffer and f_end <= l_start  
+    too_close_right = f_start >= l_end and f_start < l_end + ld_buffer 
     assert not too_close_left, (
         f"LD-ADJACENCY: feature range [{f_start},{f_end}) is within {ld_buffer} SNPs "
         f"of label range left boundary {l_start}. Risk of LD-driven AUC inflation."
@@ -56,33 +45,14 @@ def assert_no_overlap_or_adjacency(label_range: tuple, feature_range: range, ld_
 class TestNoCircularity:
 
     def test_attack_feature_windows_do_not_overlap_circular_label_range(self):
-        """
-        The feature windows used in attack.py (columns 0:k) must not overlap
-        or be LD-adjacent to the deprecated circular label range (cols 40-60).
-
-        attack.py uses feature_start=0, so feature window is [0, k).
-        The circular label range is [40, 60). The feature window [0, k) is
-        safe as long as k <= 40 - LD_BUFFER = 20.
-
-        Since attack.py now uses external (metadata-derived) labels, the
-        positional constraint is no longer functionally required — but this
-        test documents that the *deprecated* circular label method would be
-        unsafe for k > 20 with the current feature start of 0.
-        """
         safe_ks = [5, 10, 20]
         for k in safe_ks:
             fw = feature_window_from_attack(k, feature_start=0)
-            # For safe k values, no adjacency to label range
             assert_no_overlap_or_adjacency(CIRCULAR_LABEL_SNP_RANGE, fw)
 
     def test_original_circular_bug_would_fail(self):
-        """
-        Reproduce the original circular construction to confirm it WOULD
-        fail our overlap/adjacency check. Feature window was [60, 60+k),
-        which immediately follows the label window [40, 60) — LD-adjacent.
-        """
         k = 5
-        original_feature_range = range(60, 60 + k)  # original code: X_all[:, 60:60+k]
+        original_feature_range = range(60, 60 + k)
         with pytest.raises(AssertionError, match="LD-ADJACENCY"):
             assert_no_overlap_or_adjacency(CIRCULAR_LABEL_SNP_RANGE, original_feature_range)
 
