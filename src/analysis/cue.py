@@ -1,13 +1,3 @@
-"""
-Analysis: Comparative Utility-Efficiency (CUE) Table.
-
-Reads output CSVs from all three experiments and produces the expanded CUE
-table (Table 4 in the paper), with built-in sanity checks that:
-  (a) sample sizes match across all experiment outputs
-  (b) Table 4's reported latency equals the sum of its constituent phases
-  (c) overhead figures are internally consistent with raw timing values
-"""
-
 import os
 import sys
 import pandas as pd
@@ -29,14 +19,11 @@ def _get(df: pd.DataFrame, metric: str) -> float:
 
 def run_sanity_checks(bench_df: pd.DataFrame, tuned_df: pd.DataFrame):
     errors = []
-
-    # (a) Sample sizes must match across experiments
     n_exp2 = int(_get(bench_df, "N Individuals"))
     n_exp3 = int(_get(tuned_df, "N Individuals"))
     if n_exp2 != n_exp3:
         errors.append(f"Sample size mismatch: Exp2 N={n_exp2}, Exp3 N={n_exp3}")
 
-    # (b) Total latency must equal sum of constituent phases
     enc_time = _get(tuned_df, "Encryption Time (Total) (s)")
     comp_time = _get(tuned_df, "Computation Time (Total) (s)")
     total_computed = enc_time + comp_time
@@ -49,7 +36,6 @@ def run_sanity_checks(bench_df: pd.DataFrame, tuned_df: pd.DataFrame):
     except KeyError:
         pass
 
-    # (c) End-to-end overhead must be consistent with raw timing values
     try:
         pt_ms = _get(bench_df, "Plaintext Time (ms)") / 1000.0
         comp_fhe = _get(bench_df, "Total FHE Computation (s)")
@@ -86,7 +72,6 @@ def run_cue():
 
     run_sanity_checks(bench_df, tuned_df)
 
-    # Use end-to-end latency (enc + comp) for consistency with Fix 5
     orig_enc = _get(bench_df, "Total Encryption Time (s)")
     orig_comp = _get(bench_df, "Total FHE Computation (s)")
     orig_time = orig_enc + orig_comp
