@@ -1,16 +1,3 @@
-"""
-Experiment 1: Membership Inference Attack on Genomic Beacons.
-
-Cohort labels are derived exclusively from 1000 Genomes population metadata
-(external superpopulation assignment), not from SNP signal values. This
-eliminates the circularity present in the original reidentification.py, where
-labels were derived from SNPs 40-60 and features drawn from LD-adjacent SNPs
-60+, artificially inflating AUC.
-
-Baseline methods (Shringarpure-Bustamante LRT, Raisaro score) are evaluated
-alongside the logistic regression attack for direct comparison.
-"""
-
 import os
 import sys
 import argparse
@@ -29,7 +16,6 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 from src.exp1_membership_inference.cohort_construction import construct_label_external
 from src.exp1_membership_inference.baselines import compute_baseline_aucs
 
-# Fix 3: finer k-grid around the inflection point (added 60-110 resolution)
 SNP_SWEEP = [5, 10, 20, 50, 60, 70, 80, 90, 100, 110, 200]
 
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results", "exp1")
@@ -42,7 +28,7 @@ def load_genotype_matrix(tsv_path: str, n_snps: int = 500) -> tuple:
     df = pd.read_csv(tsv_path, sep="\t", header=None, nrows=n_snps)
     df = df.dropna(axis=1, how="all").dropna(axis=0, how="all")
 
-    # First row may be sample IDs if the TSV includes a header row
+
     if df.iloc[0].dtype == object:
         sample_ids = df.iloc[0].tolist()
         df = df.iloc[1:]
@@ -61,10 +47,8 @@ def load_genotype_matrix(tsv_path: str, n_snps: int = 500) -> tuple:
 def run_attack(genotype_tsv: str, panel_path: str, superpopulation: str = "EUR", seed: int = 42):
     X_all, all_sample_ids = load_genotype_matrix(genotype_tsv)
 
-    # Build labels from external metadata — zero LD relationship to feature SNPs
     member_sample_ids, y_full = construct_label_external(panel_path, superpopulation, seed)
 
-    # Align label order to genotype matrix row order.
     id_to_idx = {sid: i for i, sid in enumerate(all_sample_ids)}
     matched_indices = [id_to_idx[sid] for sid in member_sample_ids if sid in id_to_idx]
 
@@ -91,16 +75,12 @@ def run_attack(genotype_tsv: str, panel_path: str, superpopulation: str = "EUR",
     fig, ax = plt.subplots(figsize=(10, 6))
 
     for k in tqdm(SNP_SWEEP, desc="SNP feature sweep"):
-        # Features drawn from the start of the SNP matrix; since y is derived
-        # from population metadata (not SNP values), no positional restriction applies.
         X = X_sub[:, :k]
-        maf = X.mean(axis=0) / 2.0  # diploid dosage -> allele frequency
+        maf = X.mean(axis=0) / 2.0 
 
-        # Logistic regression (main attack)
+
         clf = LogisticRegression(max_iter=1000, C=10)
         lr_auc = float(np.mean(cross_val_score(clf, X, y, cv=5, scoring="roc_auc", n_jobs=-1)))
-
-        # Baseline methods
         baseline_aucs = compute_baseline_aucs(X, y, maf)
 
         results.append({
@@ -110,7 +90,6 @@ def run_attack(genotype_tsv: str, panel_path: str, superpopulation: str = "EUR",
             "Raisaro AUC": round(baseline_aucs["raisaro_auc"], 4),
         })
 
-        # ROC curve for LR
         clf.fit(X, y)
         probs = clf.predict_proba(X)[:, 1]
         fpr, tpr, _ = roc_curve(y, probs)
