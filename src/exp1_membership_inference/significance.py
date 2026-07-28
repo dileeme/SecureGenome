@@ -1,14 +1,3 @@
-"""
-Statistical significance testing for Experiment 1b IBD attack AUCs.
-
-Runs two complementary tests:
-  1. Permutation test (1000 shuffles) — is the observed AUC outside the null distribution?
-  2. Bootstrap 95% CI — what is the uncertainty on the AUC estimate?
-
-Both use the same feature matrix and labels as ibd_attack.py. Results are
-written to results/exp1/significance_results.csv.
-"""
-
 import os
 import sys
 import argparse
@@ -33,7 +22,7 @@ def permutation_test(X, y, clf, n_permutations, seed):
     rng = np.random.default_rng(seed)
     cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
 
-    # Observed AUC via cross-validated probabilities
+
     probs_obs = cross_val_predict(clf, X, y, cv=cv, method="predict_proba")[:, 1]
     observed_auc = roc_auc_score(y, probs_obs)
 
