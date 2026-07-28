@@ -1,20 +1,3 @@
-"""
-Experiment 3: 2x2 Factorial Decomposition of CKKS Parameter Compaction.
-
-Runs all four configurations of {depth L} x {scale Δ} to attribute the
-56.4% latency reduction and 3.3x MAE increase to depth reduction vs. scale
-reduction individually (main effects) and their interaction.
-
-Configurations:
-  A (baseline):   L=2, coeff=[60,40,40,60], scale=2^40
-  B (depth only): L=1, coeff=[40,40,40],    scale=2^40
-  C (scale only): L=2, coeff=[60,21,21,60], scale=2^21
-  D (compacted):  L=1, coeff=[40,21,40],    scale=2^21
-
-Outputs results/exp3/factorial_results.csv with latency, ciphertext size,
-and MAE for each configuration, plus marginal effect calculations.
-"""
-
 import os
 import csv
 import time
@@ -97,8 +80,6 @@ def benchmark_config(cfg: dict, data: np.ndarray, weights: np.ndarray, pt_result
 
 def run_factorial():
     print(f"--- 2x2 Factorial: {{L=1,L=2}} x {{scale=2^21,2^40}}  (N={N_INDIVIDUALS}, K={N_SNPS}) ---")
-
-    # Synthetic genotype-shaped data; CKKS timing is plaintext-independent.
     rng = np.random.default_rng(42)
     data = rng.integers(0, 3, size=(N_INDIVIDUALS, N_SNPS))
     weights = rng.uniform(0.001, 0.05, size=(N_SNPS,))
@@ -111,12 +92,11 @@ def run_factorial():
         results.append(r)
         print(f"  Comp Time: {r['Comp Time (s)']:.2f}s  |  MAE: {r['MAE']:.6f}  |  CT size: {r['Ciphertext Size (KB)']:.1f} KB")
 
-    # Marginal effect attribution (2x2 ANOVA-style on log-scale comp time)
     r = {row["Config"]: row for row in results}
     baseline_comp = r["A"]["Comp Time (s)"]
 
     depth_effect = r["B"]["Comp Time (s)"] - r["A"]["Comp Time (s)"]  # depth: A->B
-    scale_effect = r["C"]["Comp Time (s)"] - r["A"]["Comp Time (s)"]  # scale: A->C
+    scale_effect = r["C"]["Comp Time (s)"] - r["A"]["Comp Time (s)"]  
     interaction = (r["D"]["Comp Time (s)"] - r["A"]["Comp Time (s)"]) - depth_effect - scale_effect
     total_gain = r["D"]["Comp Time (s)"] - r["A"]["Comp Time (s)"]
 
