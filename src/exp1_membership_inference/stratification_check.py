@@ -1,29 +1,7 @@
-"""
-Stratification confound check for Experiment 1 (IBD attack).
-
-TASK 1 — Always runs:
-  Computes fine-grained population (pop) and superpopulation (super_pop)
-  distributions for (a) the 600 trio mothers and (b) the current 600 controls,
-  then runs a chi-square test of independence. If p > 0.05 the script exits with
-  a clear statement that population structure is not a confound.
-
-TASK 2 — Runs only if Task 1 finds a significant mismatch (p ≤ 0.05):
-  Builds a population-matched control set via stratified resampling of the
-  non-trio pool, matching the trio mothers' fine-grained population distribution.
-
-TASK 3 — Runs only if Task 2 ran:
-  Re-runs the full significance-test pipeline (same LR, C=10, 5-fold stratified
-  CV, 1000-permutation test, 1000-sample bootstrap) with the matched controls.
-
-TASK 4 — Runs only if Task 3 ran:
-  Prints a side-by-side comparison table: original (unmatched) vs. matched
-  controls, identical columns to the paper's Table I.
-"""
-
 import os
 import sys
 
-# Force UTF-8 output on Windows (avoids cp1252 UnicodeEncodeError for em-dashes etc.)
+
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8")
 
@@ -49,24 +27,7 @@ N_BOOTSTRAP = 1000
 RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results", "exp1")
 
 
-# ---------------------------------------------------------------------------
-# Shared: cohort ID extraction (replicates build_ibd_cohort but returns IDs)
-# ---------------------------------------------------------------------------
-
 def _extract_cohort_ids(ped_path: str, sample_ids: list, seed: int = 42):
-    """
-    Replicate the logic of build_ibd_cohort, returning sample ID lists rather
-    than integer indices.  Exposes the full non-trio pool so Task 2 can draw
-    from it without excluding individuals consumed by the current control draw.
-
-    Returns
-    -------
-    mother_ids      : list[str]  — beacon members
-    father_ids      : list[str]  — corresponding fathers (excluded from pool)
-    non_trio_ids    : list[str]  — all genotyped individuals not in any trio
-    current_ctrl_ids: list[str]  — the 600 controls used in the original run
-                                   (random shuffle with seed, first N)
-    """
     ped = pd.read_csv(ped_path, sep="\t")
     for col in ped.columns:
         ped[col] = ped[col].astype(str).str.strip()
@@ -96,7 +57,6 @@ def _extract_cohort_ids(ped_path: str, sample_ids: list, seed: int = 42):
             father_ids.append(f)
 
     trio_members = set(mother_ids) | set(father_ids)
-    # Preserve the same ordering that build_ibd_cohort would see
     non_trio_ids = [sid for sid in sample_ids if sid not in trio_members]
 
     rng = np.random.default_rng(seed)
@@ -105,11 +65,6 @@ def _extract_cohort_ids(ped_path: str, sample_ids: list, seed: int = 42):
     current_ctrl_ids = shuffled[: len(mother_ids)]
 
     return mother_ids, father_ids, non_trio_ids, current_ctrl_ids
-
-
-# ---------------------------------------------------------------------------
-# Shared: population table printing
-# ---------------------------------------------------------------------------
 
 def _print_pop_table(mother_ids, ctrl_ids, panel, label="current"):
     m_sub = panel[panel["sample"].isin(mother_ids)]
@@ -143,10 +98,6 @@ def _print_pop_table(mother_ids, ctrl_ids, panel, label="current"):
     return m_pop, c_pop, all_pops
 
 
-# ---------------------------------------------------------------------------
-# TASK 1
-# ---------------------------------------------------------------------------
-
 def task1(tsv_path, ped_path, panel_path, seed=42):
     print("\n" + "=" * 70)
     print("TASK 1 — Population Stratification Check")
@@ -170,7 +121,6 @@ def task1(tsv_path, ped_path, panel_path, seed=42):
     print(f"Non-trio pool size             : {len(non_trio_ids)}")
     print(f"Current controls (unmatched)   : {len(ctrl_ids)}")
 
-    # Coverage check — samples in genotype matrix but not in panel
     geno_set = set(sample_ids)
     panel_set = set(panel["sample"])
     uncovered = geno_set - panel_set
@@ -180,14 +130,11 @@ def task1(tsv_path, ped_path, panel_path, seed=42):
 
     print("\n=== (a) Fine-grained population distribution ===")
     m_pop, c_pop, all_pops = _print_pop_table(mother_ids, ctrl_ids, panel, label="unmatched")
-
-    # Chi-square test of independence: fine-grained pop × trio-status
     contingency = pd.DataFrame(
         {"Mothers": [m_pop.get(p, 0) for p in all_pops],
          "Controls": [c_pop.get(p, 0) for p in all_pops]},
         index=all_pops,
     )
-    # Drop rows where both cells are zero (populations not represented in either group)
     contingency = contingency[(contingency > 0).any(axis=1)]
 
     with warnings.catch_warnings():
@@ -199,7 +146,6 @@ def task1(tsv_path, ped_path, panel_path, seed=42):
     print(f"  Degrees of freedom   : {dof}")
     print(f"  p-value              : {p_val:.6f}")
 
-    # Identify largest absolute deviations for interpretive summary
     deviations = []
     for p in all_pops:
         mp = m_pop.get(p, 0) / len(mother_ids) * 100
@@ -224,9 +170,6 @@ def task1(tsv_path, ped_path, panel_path, seed=42):
             panel, p_val, sample_ids)
 
 
-# ---------------------------------------------------------------------------
-# TASK 2
-# ---------------------------------------------------------------------------
 
 def task2(mother_ids, non_trio_ids, panel, seed=42):
     print("\n" + "=" * 70)
@@ -260,8 +203,6 @@ def task2(mother_ids, non_trio_ids, panel, seed=42):
         print(f"{pop:>6}  {int(target_n):>7}  {n_avail:>7}  {n_sample:>8}  {gap_str:>6}")
 
     print(f"\nTotal matched controls: {len(matched)}  (target: {len(mother_ids)})")
-
-    # Verify achieved distribution
     achieved = panel[panel["sample"].isin(matched)]["pop"].value_counts()
     all_pops = sorted(set(target_counts.index) | set(achieved.index))
     print("\n--- Achieved vs. Target (fine-grained pop) ---")
@@ -282,10 +223,6 @@ def task2(mother_ids, non_trio_ids, panel, seed=42):
 
     return matched
 
-
-# ---------------------------------------------------------------------------
-# TASK 3 — Significance test pipeline with a given control set
-# ---------------------------------------------------------------------------
 
 def _permutation_test(X, y, clf, n_perm, seed):
     rng = np.random.default_rng(seed)
@@ -332,7 +269,7 @@ def task3(dosage, haplotypes, sample_ids,
     father_idx  = [id_to_idx[f] for f in father_ids  if f in id_to_idx]
     ctrl_idx    = [id_to_idx[c] for c in matched_ctrl_ids if c in id_to_idx]
 
-    # Align mother/father lists to what we actually found in the genotype matrix
+
     valid_pairs = [(mi, fi) for mi, fi in zip(mother_idx, father_idx)
                    if mi < dosage.shape[0] and fi < dosage.shape[0]]
     mother_idx = [p[0] for p in valid_pairs]
@@ -341,7 +278,7 @@ def task3(dosage, haplotypes, sample_ids,
     print(f"Mothers in genotype matrix : {len(mother_idx)}")
     print(f"Matched controls           : {len(ctrl_idx)}")
 
-    # Simulate children — use same seed so children are identical to original run
+ 
     rng = np.random.default_rng(seed)
     print("Simulating child genomes...")
     simulated_children = np.array([
@@ -382,9 +319,6 @@ def task3(dosage, haplotypes, sample_ids,
     return df
 
 
-# ---------------------------------------------------------------------------
-# TASK 4 — Side-by-side comparison and honest interpretation
-# ---------------------------------------------------------------------------
 
 def task4(matched_df, original_csv_path):
     print("\n" + "=" * 70)
@@ -472,10 +406,6 @@ def task4(matched_df, original_csv_path):
         )
 
 
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
-
 def main():
     parser = argparse.ArgumentParser(
         description="Stratification check for Exp 1 IBD attack (Tasks 1–4)"
@@ -500,7 +430,6 @@ def main():
     )
     args = parser.parse_args()
 
-    # Resolve paths relative to repo root (allow running from any directory)
     base = os.path.join(os.path.dirname(__file__), "..", "..")
     tsv   = os.path.join(base, args.genotype_tsv) if not os.path.isabs(args.genotype_tsv) else args.genotype_tsv
     ped   = os.path.join(base, args.ped)           if not os.path.isabs(args.ped)           else args.ped
@@ -517,7 +446,6 @@ def main():
 
     matched_ctrl_ids = task2(mother_ids, non_trio_ids, panel_df, args.seed)
 
-    # Load full phased genotype matrix for Tasks 3-4
     print("\nLoading full phased genotype matrix for attack rerun...")
     dosage, haplotypes, geno_sample_ids = load_phased_genotypes(tsv, n_snps=500)
 
