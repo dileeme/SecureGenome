@@ -1,13 +1,3 @@
-"""
-Experiment 3: CKKS Parameter Compaction (compacted configuration only).
-
-See factorial.py for the full 2x2 factorial decomposition across
-{L=1, L=2} x {scale=2^21, 2^40} required to attribute latency/MAE changes.
-
-DATA NOTE: Uses synthetic genotype-shaped data. CKKS timing is plaintext-
-independent; see src/exp2_fhe_overhead/benchmark.py for the full explanation.
-"""
-
 import os
 import csv
 import time
@@ -23,14 +13,11 @@ RESULTS_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results", "ex
 
 def experiment_compaction():
     print(f"--- [COMPACTION] Parameter-Compacted CKKS (N={N_INDIVIDUALS}, K={N_SNPS}) ---")
-
-    # Synthetic genotype-shaped data; CKKS timing is plaintext-independent.
     data = np.random.randint(0, 3, size=(N_INDIVIDUALS, N_SNPS))
     weights = np.random.uniform(0.001, 0.05, size=(N_SNPS,))
 
     pt_results = data.dot(weights)
 
-    # Compacted config D: L=1, scale=2^21
     context = ts.context(
         ts.SCHEME_TYPE.CKKS,
         poly_modulus_degree=8192,
