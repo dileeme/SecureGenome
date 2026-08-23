@@ -87,7 +87,7 @@ pipeline with matched controls. Key findings:
   and is **not** significant at k=200 (AUC=0.515, p=0.276). The high-k tail in
   unmatched results reflects population structure, not IBD.
 - The unmatched-control results (onset k=70, peak AUC=0.574 at k=200) are
-  reported as the uncorrected baseline for comparison; the matched-control results
+  reported as the uncorrected baseline for comparison and the matched-control results
   are the primary claim.
 
 **Ablation (Table S1, `attack.py`):** Labels derived from 1000G superpopulation
